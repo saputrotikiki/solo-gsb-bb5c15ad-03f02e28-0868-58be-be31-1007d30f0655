@@ -199,6 +199,129 @@ assert.ok(html3.includes('hl-conflict'), '未忽略冲突的交叠段应有冲�
 assert.ok(html3.includes('冲突审阅'), '顶栏应出现冲突审阅入口')
 console.log('  ✓ 冲突审阅面板（含忽略折叠与交叠高亮）渲染成功')
 
+// 标签重命名：打开弹层 → 预览 → 取消不改数据 → 再次确认后落地并写入 localStorage
+{
+  const renameText = '甲乙丙丁戊己庚辛壬癸'
+  const renameDoc = {
+    title: '重命名文档',
+    text: renameText.repeat(4),
+    updatedAt: Date.now(),
+    annotations: [
+      {
+        id: 'rn_a',
+        quote: '甲乙',
+        start: 0,
+        end: 2,
+        note: '',
+        tags: ['正面', '重点'],
+        status: 'bound',
+        createdAt: 100,
+        updatedAt: 100,
+        contextBefore: '',
+        contextAfter: '',
+      },
+      {
+        id: 'rn_b',
+        quote: '乙丙',
+        start: 1,
+        end: 3,
+        note: '',
+        tags: ['反面'],
+        status: 'bound',
+        createdAt: 100,
+        updatedAt: 100,
+        contextBefore: '',
+        contextAfter: '',
+      },
+    ],
+    conflictRules: [
+      { id: 'rn_r1', tagA: '正面', tagB: '反面', createdAt: 200 },
+      { id: 'rn_r2', tagA: '正面', tagB: '其他', createdAt: 300 },
+    ],
+    ignoredConflicts: [
+      { annotationIds: ['rn_a', 'rn_b'], ruleIds: ['rn_r1'], createdAt: 400 },
+    ],
+  }
+  localStorage.setItem('anchor-annotation-console:v1', JSON.stringify(renameDoc))
+  root3.unmount()
+  const c = document.createElement('div')
+  c.id = 'rootrn'
+  document.body.appendChild(c)
+  const r = createRoot(c)
+
+  await new Promise<void>((resolve) => {
+    r.render(React.createElement(React.StrictMode, null, React.createElement(App)))
+    setTimeout(resolve, 100)
+  })
+
+  const clickButton = (text: string) => {
+    const btn = [...c.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === text,
+    ) as HTMLButtonElement | undefined
+    assert.ok(btn, `应存在按钮「${text}」`)
+    btn!.click()
+    return btn!
+  }
+
+  clickButton('标签重命名')
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+  // 选择源标签 + 填写目标标签
+  const select = c.querySelector('.rename-fields select') as HTMLSelectElement
+  assert.ok(select, '应渲染源标签下拉框')
+  select.value = '正面'
+  select.dispatchEvent(new window.Event('change', { bubbles: true }))
+  const input = c.querySelector('.rename-fields input') as HTMLInputElement
+  const setValue = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    'value',
+  )!.set!
+  setValue.call(input, '褒奖')
+  input.dispatchEvent(new window.Event('input', { bubbles: true }))
+
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  const previewHtml = c.innerHTML
+  assert.ok(previewHtml.includes('受影响标注'), '应展示受影响标注')
+  assert.ok(previewHtml.includes('褒奖 ⇄ 反面'), '预览应列出替换后的规则')
+
+  // 取消：数据不变
+  clickButton('取消')
+  const afterCancel = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
+  assert.deepStrictEqual(afterCancel.annotations[0].tags, ['正面', '重点'])
+  assert.strictEqual(afterCancel.conflictRules[0].tagA, '正面')
+  console.log('  ✓ 取消预览不改动任何数据')
+
+  // 重新打开并确认
+  clickButton('标签重命名')
+  const select2 = c.querySelector('select') as HTMLSelectElement
+  select2.value = '正面'
+  select2.dispatchEvent(new window.Event('change', { bubbles: true }))
+  const input2 = c.querySelector('.rename-fields input') as HTMLInputElement
+  setValue.call(input2, '褒奖')
+  input2.dispatchEvent(new window.Event('input', { bubbles: true }))
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  clickButton('确认重命名')
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+  const afterApply = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
+  assert.deepStrictEqual(afterApply.annotations[0].tags, ['褒奖', '重点'])
+  assert.deepStrictEqual(
+    afterApply.conflictRules.map((x: { tagA: string; tagB: string }) => [x.tagA, x.tagB]),
+    [
+      ['褒奖', '反面'],
+      ['褒奖', '其他'],
+    ],
+  )
+  // 忽略记录沿用规则 ID 且仍生效
+  assert.deepStrictEqual(afterApply.ignoredConflicts[0].ruleIds, ['rn_r1'])
+  assert.ok(!c.querySelector('.tag-rename-editor'), '确认后弹层关闭')
+  assert.ok(c.innerHTML.includes('#褒奖'), '侧栏应显示新标签')
+  console.log('  ✓ 确认重命名后标注/规则原子替换并持久化')
+
+  r.unmount()
+  c.remove()
+}
+
 // 旧版数据（无 conflictRules / ignoredConflicts 字段）应无损加载
 const legacy = {
   title: '旧文档',

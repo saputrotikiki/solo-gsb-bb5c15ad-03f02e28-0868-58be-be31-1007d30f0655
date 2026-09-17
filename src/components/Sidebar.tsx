@@ -18,6 +18,8 @@ interface Props {
   onIgnore: (c: ConflictItem) => void
   onUnignore: (c: ConflictItem) => void
   onConfigureRules: () => void
+  onRenameTags: () => void
+  tagCount: number
 }
 
 function formatTime(ts: number): string {
@@ -302,6 +304,24 @@ export const Sidebar = forwardRef<HTMLElement, Props>(function Sidebar(props, se
             ))}
           </details>
         )}
+      </section>
+
+      <section className="side-section">
+        <div className="side-heading-row">
+          <h2 className="side-heading">标签管理（{props.tagCount}）</h2>
+          <button
+            className="btn btn-small btn-ghost"
+            onClick={props.onRenameTags}
+            disabled={props.tagCount === 0}
+            title="批量重命名一个标签：同步更新标注、互斥规则与忽略记录"
+          >
+            标签重命名
+          </button>
+        </div>
+        <p className="side-hint">
+          重命名会精确替换所有标注与互斥规则中的标签；同一标注内的重名标签去重保序，
+          重复互斥规则按创建时间合并，失效的忽略记录自动清理。
+        </p>
       </section>
 
       <section className="side-section">

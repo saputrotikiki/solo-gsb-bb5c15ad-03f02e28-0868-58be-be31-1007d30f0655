@@ -26,12 +26,14 @@ import {
   pruneIgnored,
   type ConflictItem,
 } from './lib/conflicts'
+import { planTagRename } from './lib/rename'
 import { TextView, type ViewRect } from './components/TextView'
 import { TextEditor } from './components/TextEditor'
 import { Sidebar } from './components/Sidebar'
 import { Popover } from './components/Popover'
 import { AnnotationForm } from './components/AnnotationForm'
 import { ConflictRuleEditor } from './components/ConflictRuleEditor'
+import { TagRenameEditor } from './components/TagRenameEditor'
 import { badgeColor } from './lib/segments'
 
 type PopoverState =
@@ -40,6 +42,7 @@ type PopoverState =
   | { kind: 'edit'; id: string; rect: ViewRect }
   | { kind: 'rebind-confirm'; range: { start: number; end: number }; rect: ViewRect }
   | { kind: 'rules' }
+  | { kind: 'rename-tags' }
 
 interface Notice {
   id: number
@@ -93,10 +96,15 @@ export default function App() {
   }, [notice])
 
   const allTags = useMemo(() => {
+    // 含规则中引用、但已无标注使用的标签（重命名入口同样需要选中它们）
     const set = new Set<string>()
     doc.annotations.forEach((a) => a.tags.forEach((t) => set.add(t)))
+    doc.conflictRules.forEach((r) => {
+      set.add(r.tagA)
+      set.add(r.tagB)
+    })
     return [...set]
-  }, [doc.annotations])
+  }, [doc.annotations, doc.conflictRules])
 
   const segments = useMemo(
     () =>
@@ -204,6 +212,35 @@ export default function App() {
       ignoredConflicts: pruneIgnored(d.ignoredConflicts, d.annotations, rules),
       updatedAt: Date.now(),
     }))
+    setPopover(null)
+  }
+
+  // ---------- 标签重命名 ----------
+
+  /**
+   * 确认标签重命名：以当前文档重新计算计划（保证与预览一致），
+   * 标注 / 规则 / 忽略记录在同一次 setDoc 中原子替换。
+   */
+  const applyTagRename = (source: string, target: string) => {
+    setDoc((d) => {
+      const plan = planTagRename(
+        {
+          annotations: d.annotations,
+          conflictRules: d.conflictRules,
+          ignoredConflicts: d.ignoredConflicts,
+        },
+        source,
+        target,
+      )
+      if (!plan) return d
+      return {
+        ...d,
+        annotations: plan.annotations,
+        conflictRules: plan.rules,
+        ignoredConflicts: plan.ignoredConflicts,
+        updatedAt: Date.now(),
+      }
+    })
     setPopover(null)
   }
 
@@ -584,6 +621,8 @@ export default function App() {
             onIgnore={ignoreConflict}
             onUnignore={unignoreConflict}
             onConfigureRules={() => setPopover({ kind: 'rules' })}
+            onRenameTags={() => setPopover({ kind: 'rename-tags' })}
+            tagCount={allTags.length}
           />
         </main>
       )}
@@ -592,7 +631,7 @@ export default function App() {
       {popover && (
         <Popover
           rect={
-            popover.kind === 'rules'
+            popover.kind === 'rules' || popover.kind === 'rename-tags'
               ? { top: -1, bottom: -1, left: -1, right: -1 }
               : popover.rect
           }
@@ -690,6 +729,16 @@ export default function App() {
               allTags={allTags}
               onCancel={() => setPopover(null)}
               onSave={saveConflictRules}
+            />
+          )}
+          {popover.kind === 'rename-tags' && (
+            <TagRenameEditor
+              annotations={doc.annotations}
+              conflictRules={doc.conflictRules}
+              ignoredConflicts={doc.ignoredConflicts}
+              allTags={allTags}
+              onCancel={() => setPopover(null)}
+              onApply={applyTagRename}
             />
           )}
         </Popover>
