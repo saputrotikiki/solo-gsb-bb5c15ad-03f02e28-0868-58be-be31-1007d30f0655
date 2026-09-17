@@ -26,12 +26,14 @@ import {
   pruneIgnored,
   type ConflictItem,
 } from './lib/conflicts'
+import { planTagRename } from './lib/renameTag'
 import { TextView, type ViewRect } from './components/TextView'
 import { TextEditor } from './components/TextEditor'
 import { Sidebar } from './components/Sidebar'
 import { Popover } from './components/Popover'
 import { AnnotationForm } from './components/AnnotationForm'
 import { ConflictRuleEditor } from './components/ConflictRuleEditor'
+import { TagRenamePanel } from './components/TagRenamePanel'
 import { badgeColor } from './lib/segments'
 
 type PopoverState =
@@ -40,11 +42,14 @@ type PopoverState =
   | { kind: 'edit'; id: string; rect: ViewRect }
   | { kind: 'rebind-confirm'; range: { start: number; end: number }; rect: ViewRect }
   | { kind: 'rules' }
+  | { kind: 'rename-tag' }
 
 interface Notice {
   id: number
   auto: number
   pending: number
+  /** 非重定位类操作的提示文案（如标签重命名结果） */
+  message?: string
 }
 
 const EMPTY_DOC: DocumentData = {
@@ -97,6 +102,16 @@ export default function App() {
     doc.annotations.forEach((a) => a.tags.forEach((t) => set.add(t)))
     return [...set]
   }, [doc.annotations])
+
+  /** 当前全部标签：标注标签 ∪ 互斥规则两端标签（供重命名源标签选择） */
+  const allKnownTags = useMemo(() => {
+    const set = new Set(allTags)
+    doc.conflictRules.forEach((r) => {
+      set.add(r.tagA)
+      set.add(r.tagB)
+    })
+    return [...set]
+  }, [allTags, doc.conflictRules])
 
   const segments = useMemo(
     () =>
@@ -236,6 +251,35 @@ export default function App() {
 
   const scrollToConflicts = () => {
     conflictSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // ---------- 标签重命名 ----------
+
+  /** 确认重命名：标注、互斥规则与忽略记录在一次状态更新中同步迁移 */
+  const confirmRenameTag = (source: string, target: string) => {
+    const plan = planTagRename(doc, source, target)
+    setDoc((d) => {
+      const p = planTagRename(d, source, target)
+      if (!p) return d
+      return {
+        ...d,
+        annotations: p.nextAnnotations,
+        conflictRules: p.nextRules,
+        ignoredConflicts: p.nextIgnored,
+        updatedAt: Date.now(),
+      }
+    })
+    setPopover(null)
+    if (plan) {
+      setNotice({
+        id: Date.now(),
+        auto: 0,
+        pending: 0,
+        message:
+          `标签「${plan.source}」已重命名为「${plan.target}」：` +
+          `${plan.annotationChanges.length} 条标注、${plan.ruleChanges.length} 条互斥规则受影响。`,
+      })
+    }
   }
 
   // ---------- 编辑原文与重定位 ----------
@@ -505,6 +549,7 @@ export default function App() {
 
       {notice && (
         <div className={`toast ${notice.pending > 0 ? 'toast-warn' : ''}`}>
+          {notice.message && <span>{notice.message}</span>}
           {notice.auto > 0 && <span>{notice.auto} 条标注已自动重定位。</span>}
           {notice.pending > 0 && (
             <strong>{notice.pending} 条标注进入待处理列表，需要手动绑定。</strong>
@@ -584,6 +629,7 @@ export default function App() {
             onIgnore={ignoreConflict}
             onUnignore={unignoreConflict}
             onConfigureRules={() => setPopover({ kind: 'rules' })}
+            onRenameTag={() => setPopover({ kind: 'rename-tag' })}
           />
         </main>
       )}
@@ -592,7 +638,7 @@ export default function App() {
       {popover && (
         <Popover
           rect={
-            popover.kind === 'rules'
+            popover.kind === 'rules' || popover.kind === 'rename-tag'
               ? { top: -1, bottom: -1, left: -1, right: -1 }
               : popover.rect
           }
@@ -690,6 +736,16 @@ export default function App() {
               allTags={allTags}
               onCancel={() => setPopover(null)}
               onSave={saveConflictRules}
+            />
+          )}
+          {popover.kind === 'rename-tag' && (
+            <TagRenamePanel
+              tags={allKnownTags}
+              annotations={doc.annotations}
+              conflictRules={doc.conflictRules}
+              ignoredConflicts={doc.ignoredConflicts}
+              onCancel={() => setPopover(null)}
+              onConfirm={confirmRenameTag}
             />
           )}
         </Popover>

@@ -102,6 +102,7 @@ assert.ok(html2.includes('待处理'), '应渲染待处理分区')
 assert.ok(html2.includes('重新选择片段'), 'pending 标注应有重绑按钮')
 assert.ok(html2.includes('备注一'), '应渲染备注')
 assert.ok(html2.includes('#重点'), '应渲染标签')
+assert.ok(html2.includes('标签重命名'), '侧栏应渲染标签重命名入口')
 console.log('  ✓ 含 bound/pending 标注的文档渲染成功')
 
 // 第三个场景：互斥规则 + 一对冲突标注 + 一条已忽略冲突
@@ -234,4 +235,111 @@ console.log('  ✓ 旧数据无损兼容并自动补齐冲突字段')
 root4.unmount()
 container4.remove()
 container3.remove()
+
+// 场景五：标签重命名 —— 侧栏入口 → 预览 → 取消不改数据 → 确认一次生效并持久化
+const renameDoc = {
+  title: '重命名文档',
+  text: '甲乙丙丁戊己庚辛',
+  updatedAt: Date.now(),
+  annotations: [
+    { id: 'r_a1', quote: '甲乙', start: 0, end: 2, note: '', tags: ['pos', '中立'], status: 'bound', createdAt: 1, updatedAt: 1, contextBefore: '', contextAfter: '' },
+    { id: 'r_a2', quote: '丙丁', start: 2, end: 4, note: '', tags: ['正面'], status: 'bound', createdAt: 2, updatedAt: 2, contextBefore: '', contextAfter: '' },
+    { id: 'r_a3', quote: '戊己', start: 4, end: 6, note: '', tags: ['反面'], status: 'bound', createdAt: 3, updatedAt: 3, contextBefore: '', contextAfter: '' },
+  ],
+  conflictRules: [
+    { id: 'rr1', tagA: '正面', tagB: '反面', createdAt: 10 },
+    { id: 'rr2', tagA: 'pos', tagB: '反面', createdAt: 5 },
+  ],
+  ignoredConflicts: [
+    { annotationIds: ['r_a2', 'r_a3'], ruleIds: ['rr1'], createdAt: 1 },
+  ],
+}
+localStorage.setItem('anchor-annotation-console:v1', JSON.stringify(renameDoc))
+const container5 = document.createElement('div')
+document.body.appendChild(container5)
+const root5 = createRoot(container5)
+
+await new Promise<void>((resolve) => {
+  root5.render(
+    React.createElement(React.StrictMode, null, React.createElement(App)),
+  )
+  setTimeout(resolve, 100)
+})
+
+const tick = () => new Promise((r) => setTimeout(r, 60))
+const findButton = (rootEl: ParentNode, text: string): HTMLButtonElement => {
+  const btn = [...rootEl.querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === text,
+  )
+  assert.ok(btn, `应存在按钮「${text}」`)
+  return btn as HTMLButtonElement
+}
+const setValue = (
+  el: HTMLInputElement | HTMLSelectElement,
+  value: string,
+  evt: 'input' | 'change',
+) => {
+  const proto =
+    el instanceof window.HTMLSelectElement
+      ? window.HTMLSelectElement.prototype
+      : window.HTMLInputElement.prototype
+  Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value)
+  el.dispatchEvent(new window.Event(evt, { bubbles: true }))
+}
+const pop = () => document.querySelector('.popover') as HTMLElement | null
+
+findButton(container5, '重命名标签').click()
+await tick()
+assert.ok(pop(), '点击入口后应弹出重命名面板')
+
+setValue(pop()!.querySelector('select')!, 'pos', 'change')
+await tick()
+setValue(pop()!.querySelector('input.rename-input')!, '正面', 'input')
+await tick()
+findButton(pop()!, '预览影响').click()
+await tick()
+assert.ok(
+  pop()!.textContent!.includes('将影响 1 条标注、2 条互斥规则'),
+  '预览应统计受影响标注与规则',
+)
+assert.ok(pop()!.textContent!.includes('合并重复规则 1 条'), '预览应统计将被合并的规则')
+
+// 取消预览：数据保持不变
+findButton(pop()!, '取消').click()
+await tick()
+assert.deepStrictEqual(
+  JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!),
+  JSON.parse(JSON.stringify(renameDoc)),
+  '取消预览不得改动数据',
+)
+
+// 重新打开并确认：一次状态更新完成替换、合并与忽略记录迁移
+findButton(container5, '重命名标签').click()
+await tick()
+setValue(pop()!.querySelector('select')!, 'pos', 'change')
+await tick()
+setValue(pop()!.querySelector('input.rename-input')!, '正面', 'input')
+await tick()
+findButton(pop()!, '预览影响').click()
+await tick()
+findButton(pop()!, '确认重命名').click()
+await tick()
+
+const saved5 = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
+assert.deepStrictEqual(saved5.annotations[0].tags, ['正面', '中立'], '标注标签应精确替换')
+assert.deepStrictEqual(
+  saved5.conflictRules,
+  [{ id: 'rr2', tagA: '正面', tagB: '反面', createdAt: 5 }],
+  '无序重复规则应合并并保留最早一条',
+)
+assert.deepStrictEqual(
+  saved5.ignoredConflicts,
+  [{ annotationIds: ['r_a2', 'r_a3'], ruleIds: ['rr2'], createdAt: 1 }],
+  '忽略记录应映射到保留规则',
+)
+assert.ok(container5.innerHTML.includes('已重命名为'), '确认后应提示重命名结果')
+console.log('  ✓ 标签重命名：预览 / 取消 / 确认与持久化均符合预期')
+
+root5.unmount()
+container5.remove()
 console.log('\n全部渲染冒烟测试通过')
